@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>校内案内マップ</title>
+    <style>
+        /* 見た目（前回と同じ） */
+        body { font-family: sans-serif; text-align: center; background-color: #f0f8ff; padding: 10px; }
+        .control-panel { background: white; padding: 20px; border-radius: 10px; max-width: 500px; margin: 0 auto 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        select { font-size: 16px; padding: 5px; margin: 5px; width: 80%; }
+        .bf-check { margin: 10px 0; font-weight: bold; color: #0056b3; }
+        .search-btn { background-color: #ff9900; color: white; border: none; padding: 10px 30px; font-size: 18px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+        .search-btn:hover { background-color: #e68a00; }
+        #screen { margin: 0 auto; max-width: 600px; background: #333; padding: 10px; border-radius: 5px; min-height: 300px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        img { max-width: 100%; height: auto; border: 1px solid #fff; }
+        #caption { color: white; font-size: 18px; margin-top: 10px; }
+        .nav-btns { margin-top: 15px; }
+        .nav-btns button { padding: 10px 20px; font-size: 16px; margin: 0 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h1>🏫 校内ルート案内</h1>
+
+    <div class="control-panel">
+        <label>出発：
+            <select id="startSelect">
+                <option value="A-3E">3-E</option>
+                <option value="B">評議会室</option>
+                <option value="Gate">正門</option>
+            </select>
+        </label>
+        <br>
+        <label>到着：
+            <select id="goalSelect">
+                <option value="A">3-E</option>
+                <option value="選択教室IV">選択教室IV</option>
+                <option value="環境物質化学実験室">環境物質化学実験室</option>
+                <option value="Gym">体育館</option>
+            </select>
+        </label>
+        
+        <div class="bf-check">
+            <label><input type="checkbox" id="checkBF"> バリアフリー（階段なし）</label>
+        </div>
+
+        <button class="search-btn" onclick="searchRoute()">ルート検索</button>
+    </div>
+
+    <div id="screen">
+        <img id="naviPhoto" src="" alt="案内写真" style="display:none;">
+        <p id="caption">ルートを選んで検索してください</p>
+    </div>
+
+    <div class="nav-btns">
+        <button onclick="prevPhoto()">◀ 戻る</button>
+        <button onclick="nextPhoto()">進む ▶</button>
+    </div>
+
+    <script>
+        // 教養棟:A 専門棟1:B 専門棟2:C 専門棟:S 階段:ST 入口:EN 出口:EX
+
+        // 1. 【部品データベース】
+        // 「A棟から出る」「渡り廊下」「B棟に入る」などの細かいパーツを作ります
+        // ※ bf: null と書くと、normalと同じ写真を使います（共通の場合）
+        const parts = {
+            // 教養棟関係
+            "A(3F)_exit": {
+                normal: ["A(3F).jpeg", "A(3F)_ST.jpeg","A(2F)_ST_EX.jpeg"],
+                bf:     null
+            },
+            "A_exit": {
+                normal: ["A(2F)_To_EX.jpeg", "A(2F)_EX.jpeg"],
+                bf:     null
+            },
+            "A_enter": {
+                normal: ["a_shoes.jpg", "a_enter_stairs.jpg"],
+                bf:     ["a_shoes_slope.jpg", "a_enter_elevator.jpg"]
+            },
+            
+            // 専門棟関係
+            "B_exit": {
+                normal: ["b_exit_stairs.jpg"],
+                bf:     ["b_exit_elevator.jpg"]
+            },
+            "B_enter": {
+                normal: ["b_shoes.jpg", "b_enter_stairs.jpg"],
+                bf:     ["b_shoes_slope.jpg", "b_enter_elevator.jpg"]
+            },
+            "C_enter": {
+                normal: ["C(2F)_enter.jpg", "C(2F).jpg"],
+                bf:     null
+            },
+            "S_enter": {
+                normal: ["S_enter.JPG"],
+                bf:     null
+            },
+            //専門棟入るところの写真がない
+
+            // つなぎの道（共通パーツ）
+            "Road_A_to_S": {
+                normal: ["A_to_S.jpeg"],
+                bf:     ["A_to_S.jpeg","senmontou_Slope.jpeg"],
+            },
+            "Road_Gate_to_A": {
+                normal: ["gate.jpg", "tree_road.jpg"],
+                bf:     null
+            },
+
+            //教室関連
+            "評議会室": {
+                normal:["Hyougikai_room.jpeg"],
+                bf:     null
+            },
+            "選択教室IV": {
+                normal:["選択教室IV.JPG"],
+                bf:     null
+            },
+            "環境物質化学実験室": {
+                normal:["環境物質化学実験室.JPG"],
+                bf:     null
+            }
+
+        };
+
+        // 2. 【ルートの設計図】
+        // どの部品を、どの順番でくっつけるかを定義します
+        // 名前は「出発_to_到着」のルールで決めます
+        const routePatterns = {
+            "A-3E_to_選択教室IV": ["A(3F)_exit","A_exit", "Road_A_to_S", "S_enter","C_enter","選択教室IV"],
+            "A-3E_to_環境物質化学実験室": ["A(3F)_exit","A_exit", "Road_A_to_S", "S_enter","C_enter","環境物質化学実験室"],
+            "B_to_A": ["B_exit", "Road_A_to_B", "A_enter"], // 逆も部品さえあれば簡単！
+            "Gate_to_A": ["Road_Gate_to_A", "A_enter"],
+            // 必要な組み合わせをここに足していく
+        };
+
+
+        // --- これ以降は変更しなくてOK（自動処理システム） ---
+
+        let currentPhotos = [];
+        let currentIndex = 0;
+
+        function searchRoute() {
+            const start = document.getElementById("startSelect").value;
+            const goal = document.getElementById("goalSelect").value;
+            const isBF = document.getElementById("checkBF").checked;
+
+            if (start === goal) {
+                alert("出発地と目的地が同じです");
+                return;
+            }
+
+            // キーを作成（例: "A_to_B"）
+            const key = start + "_to_" + goal;
+
+            // 設計図があるか確認
+            if (routePatterns[key]) {
+                // ★ここが結合ロボットの仕事★
+                // 設計図に書かれた部品名を順番に見て、写真をリストに追加していく
+                let combinedPhotos = [];
+                
+                // 設計図（配列）をループ処理
+                const partsList = routePatterns[key];
+                for (let i = 0; i < partsList.length; i++) {
+                    const partName = partsList[i]; // "A_exit" など
+                    const partData = parts[partName]; // データを取り出す
+
+                    if (!partData) {
+                        console.error("部品が見つかりません: " + partName);
+                        continue;
+                    }
+
+                    // バリアフリーか通常かで使う写真リストを決める
+                    let photosToAdd;
+                    if (isBF && partData.bf !== null) {
+                        photosToAdd = partData.bf; // BF用の写真があるならそれを使う
+                    } else {
+                        photosToAdd = partData.normal; // ないなら通常用（または共通）を使う
+                    }
+
+                    // リストを結合（concat）
+                    combinedPhotos = combinedPhotos.concat(photosToAdd);
+                }
+
+                currentPhotos = combinedPhotos;
+                currentIndex = 0;
+                
+                // 画面更新
+                document.getElementById("caption").innerText = isBF ? "バリアフリールート案内" : "通常ルート案内";
+                showPhoto();
+
+            } else {
+                alert("そのルート（" + key + "）はまだ登録されていません。");
+                document.getElementById("naviPhoto").style.display = "none";
+            }
+        }
+
+        function showPhoto() {
+            if (currentPhotos.length > 0) {
+                document.getElementById("naviPhoto").src = currentPhotos[currentIndex];
+                document.getElementById("naviPhoto").style.display = "block";
+            }
+        }
+
+        function nextPhoto() {
+            if (currentPhotos.length === 0) return;
+            if (currentIndex < currentPhotos.length - 1) {
+                currentIndex++;
+                showPhoto();
+            } else {
+                alert("到着！");
+            }
+        }
+
+        function prevPhoto() {
+            if (currentPhotos.length === 0) return;
+            if (currentIndex > 0) {
+                currentIndex--;
+                showPhoto();
+            }
+        }
+    </script>
+</body>
+</html>
